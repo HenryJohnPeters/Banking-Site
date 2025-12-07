@@ -430,6 +430,35 @@ npm run test:watch           # Watch mode
 
 ---
 
+## Technical Questions & Answers
+
+**How do you ensure transaction atomicity?**
+Database transactions with `withTransaction()` wrapper ensure all operations succeed or fail together atomically.
+
+**How do you prevent double-spending?**
+Deterministic account locking with `SELECT FOR UPDATE` and idempotency keys prevent concurrent access and duplicate transactions.
+
+**How do you maintain consistency between ledger entries and account balances?**
+Account balances are calculated from ledger entries as the authoritative source, ensuring mathematical consistency.
+
+**How would you handle decimal precision for different currencies?**
+`Decimal.js` library provides precise financial calculations avoiding floating-point errors across all currencies.
+
+**What indexing strategy would you use for the ledger table?**
+Composite indexes on `(account_id, created_at DESC)` for balance calculations and `(transaction_id)` for audit trails.
+
+**How would you verify that balances are correctly synchronized?**
+`verifyLedgerIntegrity()` service method validates all transactions sum to zero and account balances match ledger calculations.
+
+**How would you scale this system for millions of users?**
+Read replicas for queries, database sharding by user_id, Redis caching for balances, and event-driven architecture with message queues.
+
+## Note
+
+With more time I would have completed more ux and manaul tests aswell as ensure end to flawless implmentation of each feature.
+
+---
+
 ## Related Projects
 
 **🎲 BetFlix – Basic web3 Auth site**  
