@@ -113,3 +113,26 @@ export const ledgerEntries = pgTable(
     };
   }
 );
+
+export const auditLog = pgTable(
+  "audit_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").references(() => users.id),
+    action: varchar("action", { length: 100 }).notNull(),
+    resourceType: varchar("resource_type", { length: 100 }).notNull(),
+    resourceId: varchar("resource_id", { length: 255 }),
+    details: varchar("details", { length: 2000 }), // JSON string
+    ipAddress: varchar("ip_address", { length: 50 }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => {
+    return {
+      userIdIdx: index("audit_log_user_id_idx").on(table.userId),
+      createdAtIdx: index("audit_log_created_at_idx").on(table.createdAt),
+      actionIdx: index("audit_log_action_idx").on(table.action),
+    };
+  }
+);

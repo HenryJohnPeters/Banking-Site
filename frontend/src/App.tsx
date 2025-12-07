@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import {
   BrowserRouter as Router,
   Routes,
@@ -6,10 +6,19 @@ import {
   Navigate,
 } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import Login from "./features/auth/components/Login";
-import Register from "./features/auth/components/Register";
+import {
+  GlobalLoadingProvider,
+  useGlobalLoading,
+} from "./context/GlobalLoadingContext";
+import { initializeInterceptors } from "./api/client";
+import LoginPage from "./features/auth/components/Login";
+import RegisterPage from "./features/auth/components/Register";
 import Dashboard from "./features/accounts/components/Dashboard";
-import TransactionHistory from "./features/transactions/components/TransactionHistory";
+import TransactionsPage from "./features/transactions/components/pages/TransactionsPage";
+import ExchangePage from "./features/transactions/components/pages/ExchangePage";
+import TransferPage from "./features/transactions/components/pages/TransferPage";
+import ExchangeFormPage from "./features/transactions/components/pages/ExchangeFormPage";
+import TransactionHistory from "./features/transactions/components/pages/TransactionHistory";
 import Layout from "./components/layout/Layout";
 import LoadingSpinner from "./components/ui/LoadingSpinner";
 import "./index.css";
@@ -50,7 +59,7 @@ const AppRoutes = () => {
         path="/login"
         element={
           <PublicRoute>
-            <Login />
+            <LoginPage />
           </PublicRoute>
         }
       />
@@ -58,7 +67,7 @@ const AppRoutes = () => {
         path="/register"
         element={
           <PublicRoute>
-            <Register />
+            <RegisterPage />
           </PublicRoute>
         }
       />
@@ -77,6 +86,46 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute>
             <Layout>
+              <TransactionsPage />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/transfer"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <TransferPage />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/exchange"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <ExchangePage />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/exchange-currency"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <ExchangeFormPage />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/history"
+        element={
+          <ProtectedRoute>
+            <Layout>
               <TransactionHistory />
             </Layout>
           </ProtectedRoute>
@@ -86,20 +135,40 @@ const AppRoutes = () => {
   );
 };
 
+const AppWithInterceptors = () => {
+  const { incrementRequests, decrementRequests, setGlobalError } =
+    useGlobalLoading();
+
+  useEffect(() => {
+    // Initialize API interceptors with global loading context
+    initializeInterceptors(
+      incrementRequests,
+      decrementRequests,
+      setGlobalError
+    );
+  }, [incrementRequests, decrementRequests, setGlobalError]);
+
+  return (
+    <Router
+      future={{
+        v7_startTransition: true,
+        v7_relativeSplatPath: true,
+      }}
+    >
+      <div className="min-h-screen bg-gray-50">
+        <AppRoutes />
+      </div>
+    </Router>
+  );
+};
+
 const App = () => {
   return (
-    <AuthProvider>
-      <Router
-        future={{
-          v7_startTransition: true,
-          v7_relativeSplatPath: true,
-        }}
-      >
-        <div className="min-h-screen bg-gray-50">
-          <AppRoutes />
-        </div>
-      </Router>
-    </AuthProvider>
+    <GlobalLoadingProvider>
+      <AuthProvider>
+        <AppWithInterceptors />
+      </AuthProvider>
+    </GlobalLoadingProvider>
   );
 };
 

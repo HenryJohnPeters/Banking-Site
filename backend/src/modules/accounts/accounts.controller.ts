@@ -12,13 +12,11 @@ import {
   ApiResponse,
   ApiParam,
   ApiQuery,
-  ApiBearerAuth,
 } from "@nestjs/swagger";
 import { AccountsService } from "./accounts.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
 
 @ApiTags("Accounts")
-@ApiBearerAuth()
 @Controller("accounts")
 @UseGuards(JwtAuthGuard)
 export class AccountsController {
@@ -56,7 +54,7 @@ export class AccountsController {
   })
   @ApiResponse({ status: 401, description: "Unauthorized" })
   async getUserAccounts(@Request() req) {
-    return this.accountsService.getUserAccounts(req.user.id);
+    return this.accountsService.getUserAccounts(req.user.sub);
   }
 
   @Get(":id")
@@ -90,7 +88,7 @@ export class AccountsController {
   })
   @ApiResponse({ status: 401, description: "Unauthorized" })
   async getAccount(@Param("id") accountId: string, @Request() req) {
-    return this.accountsService.getAccountById(accountId, req.user.id);
+    return this.accountsService.getAccountById(accountId, req.user.sub);
   }
 
   @Get(":id/balance")
@@ -120,7 +118,7 @@ export class AccountsController {
   })
   @ApiResponse({ status: 401, description: "Unauthorized" })
   async getAccountBalance(@Param("id") accountId: string, @Request() req) {
-    return this.accountsService.getAccountBalance(accountId, req.user.id);
+    return this.accountsService.getAccountBalance(accountId, req.user.sub);
   }
 
   @Get(":id/transactions")
@@ -169,13 +167,13 @@ export class AccountsController {
     @Param("id") accountId: string,
     @Request() req,
     @Query("page") page: string = "1",
-    @Query("limit") limit: string = "20"
+    @Query("limit") limit: string = "20",
   ) {
     return this.accountsService.getAccountTransactions(
       accountId,
-      req.user.id,
+      req.user.sub,
       parseInt(page),
-      parseInt(limit)
+      parseInt(limit),
     );
   }
 
@@ -205,10 +203,7 @@ export class AccountsController {
   })
   @ApiResponse({ status: 404, description: "Account not found" })
   @ApiResponse({ status: 401, description: "Unauthorized" })
-  async reconcileAccountBalance(
-    @Param("id") accountId: string,
-    @Request() req
-  ) {
+  async reconcileAccountBalance(@Param("id") accountId: string) {
     return this.accountsService.verifyAccountBalance(accountId);
   }
 }

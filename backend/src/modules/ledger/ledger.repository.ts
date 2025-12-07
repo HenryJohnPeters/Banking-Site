@@ -1,110 +1,238 @@
 import { Injectable } from "@nestjs/common";
-import { db } from "../../shared/database/client";
 import { PoolClient } from "pg";
-import { LedgerEntry } from "../../models/Ledger";
+import { DatabaseService } from "../../shared/database/client";
+import {
+  LedgerEntry,
+  LedgerEntryInput,
+  LedgerBalance,
+} from "../../models/Ledger";
 
 @Injectable()
 export class LedgerRepository {
-  async insertEntry(
+  constructor(private readonly dbService: DatabaseService) {}
+
+  /**
+   * Creates a single ledger entry in the database
+   */
+  async createLedgerEntry(
+    entry: LedgerEntryInput,
     client: PoolClient,
-    data: {
-      transactionId: string;
-      accountId: string;
-      amount: number;
-      description: string;
-    }
-  ): Promise<void> {
-    await client.query(
-      `INSERT INTO ledger_entries (transaction_id, account_id, amount, description) 
-       VALUES ($1, $2, $3, $4)`,
-      [data.transactionId, data.accountId, data.amount, data.description]
-    );
+  ): Promise<LedgerEntry> {
+    const query = `
+      INSERT INTO ledger_entries (
+        transaction_id, account_id, amount, type, description, created_at
+      ) VALUES ($1, $2, $3, $4, $5, NOW())
+      RETURNING id, transaction_id, account_id, amount, type, description, created_at
+    `;
+
+    const values = [
+      entry.transaction_id,
+      entry.account_id,
+      entry.amount,
+      entry.type,
+      entry.description,
+    ];
+
+    const result = await client.query(query, values);
+    return result.rows[0];
   }
 
-  async getEntriesByTransaction(transactionId: string): Promise<LedgerEntry[]> {
-    const result = await db.query(
-      `SELECT * FROM ledger_entries WHERE transaction_id = $1 ORDER BY created_at`,
-      [transactionId]
-    );
+  /**
+   * Retrieves all ledger entries for a specific transaction
+   */
+  async getLedgerEntriesByTransaction(
+    transactionId: string,
+    client?: PoolClient,
+  ): Promise<LedgerEntry[]> {
+    const query = `
+      SELECT id, transaction_id, account_id, amount, type, description, created_at
+      FROM ledger_entries
+      WHERE transaction_id = $1
+      ORDER BY created_at ASC
+    `;
+
+    const dbClient = client || this.dbService.getPool();
+    const result = await dbClient.query(query, [transactionId]);
     return result.rows;
   }
 
-  async getEntriesByAccount(
+  /**
+   * Calculates the current balance for a specific account based on ledger entries
+   * This is the authoritative source of account balances
+   */
+  async calculateAccountBalance(
     accountId: string,
-    page: number = 1,
-    limit: number = 50
-  ): Promise<{ entries: LedgerEntry[]; total: number }> {
-    const offset = (page - 1) * limit;
+    client?: PoolClient,
+  ): Promise<number> {
+    const query = `
+      SELECT COALESCE(SUM(amount), 0) as balance
+      FROM ledger_entries
+      WHERE account_id = $1
+    `;
 
-    const [entriesResult, countResult] = await Promise.all([
-      db.query(
-        `SELECT l.*, t.description as transaction_description 
-         FROM ledger_entries l 
-         JOIN transactions t ON l.transaction_id = t.id
-         WHERE l.account_id = $1 
-         ORDER BY l.created_at DESC 
-         LIMIT $2 OFFSET $3`,
-        [accountId, limit, offset]
-      ),
-      db.query(`SELECT COUNT(*) FROM ledger_entries WHERE account_id = $1`, [
-        accountId,
-      ]),
-    ]);
-
-    return {
-      entries: entriesResult.rows,
-      total: parseInt(countResult.rows[0].count),
-    };
+    const dbClient = client || this.dbService.getPool();
+    const result = await dbClient.query(query, [accountId]);
+    return parseFloat(result.rows[0].balance) || 0;
   }
 
-  async calculateAccountBalance(accountId: string): Promise<number> {
-    const result = await db.query(
-      `SELECT COALESCE(SUM(amount), 0) as balance FROM ledger_entries WHERE account_id = $1`,
-      [accountId]
-    );
-    return parseFloat(result.rows[0].balance);
-  }
+  /**
+   * Gets balance information for multiple accounts
+   */
+  async getAccountBalances(accountIds: string[]): Promise<LedgerBalance[]> {
+    if (accountIds.length === 0) return [];
 
-  async findUnbalancedTransactions(): Promise<
-    Array<{ transaction_id: string; total_amount: number; entry_count: number }>
-  > {
-    const result = await db.query(`
+    const placeholders = accountIds
+      .map((_, index) => `$${index + 1}`)
+      .join(",");
+    const query = `
       SELECT 
-        transaction_id,
-        SUM(amount) as total_amount,
-        COUNT(*) as entry_count
-      FROM ledger_entries 
-      GROUP BY transaction_id 
-      HAVING ABS(SUM(amount)) > 0.01
-    `);
+        account_id,
+        COALESCE(SUM(amount), 0) as total_amount
+      FROM ledger_entries
+      WHERE account_id IN (${placeholders})
+      GROUP BY account_id
+    `;
 
+    const result = await this.dbService.getPool().query(query, accountIds);
     return result.rows.map((row) => ({
-      transaction_id: row.transaction_id,
+      account_id: row.account_id,
       total_amount: parseFloat(row.total_amount),
-      entry_count: parseInt(row.entry_count, 10),
     }));
   }
 
-  async countDistinctTransactions(): Promise<number> {
-    const result = await db.query(
-      "SELECT COUNT(DISTINCT transaction_id) as total FROM ledger_entries"
-    );
-    return parseInt(result.rows[0].total, 10);
+  /**
+   * Gets the sum of ledger entries for each transaction to verify balance
+   * Used for ledger integrity verification
+   */
+  async getTransactionBalances(): Promise<
+    Array<{ transaction_id: string; total_amount: number }>
+  > {
+    const query = `
+      SELECT 
+        transaction_id,
+        SUM(amount) as total_amount
+      FROM ledger_entries
+      GROUP BY transaction_id
+      HAVING COUNT(*) >= 2
+    `;
+
+    const result = await this.dbService.getPool().query(query);
+    return result.rows.map((row) => ({
+      transaction_id: row.transaction_id,
+      total_amount: parseFloat(row.total_amount),
+    }));
   }
 
-  async getAllAccountBalances(): Promise<
-    Array<{ id: string; account_balance: number; ledger_balance: number }>
+  /**
+   * Compares stored account balances with calculated ledger balances
+   * Used for integrity verification
+   */
+  async verifyAccountBalances(): Promise<
+    Array<{
+      account_id: string;
+      stored_balance: number;
+      calculated_balance: number;
+    }>
   > {
-    const result = await db.query(`
+    const query = `
+      SELECT 
+        a.id as account_id,
+        a.balance as stored_balance,
+        COALESCE(SUM(le.amount), 0) as calculated_balance
+      FROM accounts a
+      LEFT JOIN ledger_entries le ON le.account_id = a.id
+      GROUP BY a.id, a.balance
+      ORDER BY a.id
+    `;
+
+    const result = await this.dbService.getPool().query(query);
+    return result.rows.map((row) => ({
+      account_id: row.account_id,
+      stored_balance: parseFloat(row.stored_balance),
+      calculated_balance: parseFloat(row.calculated_balance),
+    }));
+  }
+
+  /**
+   * Gets ledger entries for a specific account with pagination
+   */
+  async getLedgerEntriesByAccount(
+    accountId: string,
+    limit: number = 50,
+    offset: number = 0,
+  ): Promise<LedgerEntry[]> {
+    const query = `
+      SELECT id, transaction_id, account_id, amount, type, description, created_at
+      FROM ledger_entries
+      WHERE account_id = $1
+      ORDER BY created_at DESC
+      LIMIT $2 OFFSET $3
+    `;
+
+    const result = await this.dbService
+      .getPool()
+      .query(query, [accountId, limit, offset]);
+    return result.rows;
+  }
+
+  /**
+   * Gets the count of ledger entries for a specific account
+   */
+  async getLedgerEntryCountByAccount(accountId: string): Promise<number> {
+    const query = `
+      SELECT COUNT(*) as count
+      FROM ledger_entries
+      WHERE account_id = $1
+    `;
+
+    const result = await this.dbService.getPool().query(query, [accountId]);
+    return parseInt(result.rows[0].count);
+  }
+
+  /**
+   * Gets recent ledger entries across all accounts for audit purposes
+   */
+  async getRecentLedgerEntries(
+    limit: number = 100,
+    offset: number = 0,
+  ): Promise<Array<LedgerEntry & { currency: string }>> {
+    const query = `
+      SELECT 
+        le.id, le.transaction_id, le.account_id, le.amount, le.type, le.description, le.created_at,
+        a.currency
+      FROM ledger_entries le
+      JOIN accounts a ON a.id = le.account_id
+      ORDER BY le.created_at DESC
+      LIMIT $1 OFFSET $2
+    `;
+
+    const result = await this.dbService.getPool().query(query, [limit, offset]);
+    return result.rows;
+  }
+
+  /**
+   * Gets all account balances with comparison between stored and calculated values
+   * Expected by tests for balance verification
+   */
+  async getAllAccountBalances(): Promise<
+    Array<{
+      id: string;
+      account_balance: number;
+      ledger_balance: number;
+    }>
+  > {
+    const query = `
       SELECT 
         a.id,
         a.balance as account_balance,
-        COALESCE(SUM(l.amount), 0) as ledger_balance
+        COALESCE(SUM(le.amount), 0) as ledger_balance
       FROM accounts a
-      LEFT JOIN ledger_entries l ON a.id = l.account_id
+      LEFT JOIN ledger_entries le ON le.account_id = a.id
       GROUP BY a.id, a.balance
-    `);
+      ORDER BY a.id
+    `;
 
+    const result = await this.dbService.getPool().query(query);
     return result.rows.map((row) => ({
       id: row.id,
       account_balance: parseFloat(row.account_balance),

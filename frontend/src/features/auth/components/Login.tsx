@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../../context/AuthContext";
+import { useToast } from "../../../hooks/useToast";
+import { ToastContainer } from "../../../components/ui/Toast/Toast";
 import FormField from "../../../components/ui/FormField/FormField";
 import ErrorAlert from "../../../components/ui/ErrorAlert/ErrorAlert";
 import Button from "../../../components/ui/Button/Button";
@@ -10,6 +12,7 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+  const { toasts, showToast, dismissToast } = useToast();
 
   const { formData, errors, updateField, validateForm, setGeneralError } =
     useAuthForm({ isRegister: false });
@@ -26,11 +29,15 @@ const Login = () => {
         email: formData.email,
         password: formData.password,
       });
+      showToast("Login successful! Redirecting to dashboard...", {
+        type: "success",
+      });
       navigate("/dashboard");
     } catch (err: any) {
-      setGeneralError(
-        err.response?.data?.message || "Login failed. Please try again."
-      );
+      const errorMessage =
+        err.response?.data?.message || "Login failed. Please try again.";
+      setGeneralError(errorMessage);
+      showToast(errorMessage, { type: "error" });
     } finally {
       setLoading(false);
     }
@@ -38,6 +45,8 @@ const Login = () => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-blue-50 via-white to-cyan-50 py-12 px-4 sm:px-6 lg:px-8">
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+
       <div className="max-w-md w-full">
         {/* Logo/Brand Section */}
         <div className="text-center mb-8">

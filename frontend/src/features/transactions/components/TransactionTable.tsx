@@ -4,9 +4,13 @@ import TransactionRow from "./TransactionRow";
 
 interface TransactionTableProps {
   transactions: Transaction[];
+  onTransactionClick?: (transaction: Transaction) => void;
 }
 
-const TransactionTable = ({ transactions }: TransactionTableProps) => {
+const TransactionTable = ({
+  transactions,
+  onTransactionClick,
+}: TransactionTableProps) => {
   const tableHeaders = [
     "Transaction",
     "Type",
@@ -15,6 +19,11 @@ const TransactionTable = ({ transactions }: TransactionTableProps) => {
     "Date",
     "Reference",
   ];
+
+  // Add "Action" header if onTransactionClick is provided
+  if (onTransactionClick) {
+    tableHeaders.push("Action");
+  }
 
   return (
     <Card padding={false}>
@@ -35,7 +44,10 @@ const TransactionTable = ({ transactions }: TransactionTableProps) => {
           <tbody className="bg-white divide-y divide-gray-200">
             {transactions.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
+                <td
+                  colSpan={onTransactionClick ? 7 : 6}
+                  className="px-6 py-8 text-center text-gray-500"
+                >
                   No transactions found
                 </td>
               </tr>
@@ -44,6 +56,7 @@ const TransactionTable = ({ transactions }: TransactionTableProps) => {
                 <TransactionRow
                   key={transaction.id}
                   transaction={transaction}
+                  onTransactionClick={onTransactionClick}
                 />
               ))
             )}

@@ -34,6 +34,9 @@ export interface Transaction {
   reference_id?: string; // For linking related transactions (e.g., exchange pairs)
   created_at: Date;
   updated_at: Date;
+  from_currency?: Currency;
+  to_currency?: Currency;
+  to_amount?: number; // For exchange transactions
 }
 
 export class TransferDto {

@@ -1,5 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
+import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
+import { APP_GUARD } from "@nestjs/core";
 import { AuthModule } from "./modules/auth/auth.module";
 import { AccountsModule } from "./modules/accounts/accounts.module";
 import { TransactionsModule } from "./modules/transactions/transactions.module";
@@ -16,8 +18,15 @@ import { INestApplication } from "@nestjs/common";
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    // Global rate limiting to prevent abuse
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000, // Time window in milliseconds (1 minute)
+        limit: 100, // Max requests per time window
+      },
+    ]),
     JwtModule.register({
-      secret: process.env.JWT_SECRET || "your-secret-key",
+      secret: process.env.JWT_SECRET,
       signOptions: { expiresIn: "24h" },
     }),
     AuthModule,
@@ -25,7 +34,16 @@ import { INestApplication } from "@nestjs/common";
     TransactionsModule,
     LedgerModule,
   ],
-  providers: [HealthService, AuditLogService, BalanceGateway],
+  providers: [
+    HealthService,
+    AuditLogService,
+    BalanceGateway,
+    // Apply rate limiting globally
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
   exports: [AuditLogService, BalanceGateway],
 })
 export class AppModule {

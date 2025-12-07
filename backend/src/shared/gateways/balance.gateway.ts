@@ -8,7 +8,7 @@ import {
   MessageBody,
 } from "@nestjs/websockets";
 import { Server, Socket } from "socket.io";
-import { Injectable, UseGuards } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 
 export interface BalanceUpdate {
@@ -84,7 +84,7 @@ export class BalanceGateway
   @SubscribeMessage("subscribe:balance")
   handleSubscribeToBalance(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { accountId: string }
+    @MessageBody() data: { accountId: string },
   ) {
     client.join(`account:${data.accountId}`);
     return { event: "subscribed", accountId: data.accountId };
@@ -93,7 +93,7 @@ export class BalanceGateway
   @SubscribeMessage("unsubscribe:balance")
   handleUnsubscribeFromBalance(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { accountId: string }
+    @MessageBody() data: { accountId: string },
   ) {
     client.leave(`account:${data.accountId}`);
     return { event: "unsubscribed", accountId: data.accountId };
@@ -101,6 +101,11 @@ export class BalanceGateway
 
   // Method to emit balance updates (called from services)
   emitBalanceUpdate(update: BalanceUpdate) {
+    // Skip if server is not initialized (e.g., in test environment)
+    if (!this.server) {
+      return;
+    }
+
     // Emit to user-specific room
     this.server.to(`user:${update.userId}`).emit("balance:updated", {
       accountId: update.accountId,
@@ -118,12 +123,20 @@ export class BalanceGateway
     });
 
     console.log(
-      `Balance update emitted for account ${update.accountId}: ${update.newBalance} ${update.currency}`
+      `Balance update emitted for account ${update.accountId}: ${update.newBalance} ${update.currency}`,
     );
   }
 
   // Method to emit transaction notifications
-  emitTransactionNotification(userId: string, transaction: any) {
+  emitTransactionNotification(
+    userId: string,
+    transaction: { id: string; amount: number; type: string },
+  ) {
+    // Skip if server is not initialized (e.g., in test environment)
+    if (!this.server) {
+      return;
+    }
+
     this.server.to(`user:${userId}`).emit("transaction:new", {
       transaction,
       timestamp: new Date(),

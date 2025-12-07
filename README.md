@@ -1,303 +1,441 @@
-# Banking Platform
+# Mini Banking Platform
 
-Backend: NestJS 11, PostgreSQL, Drizzle ORM, JWT  
-Frontend: React 19, TypeScript, Tailwind, Vite
+A simplified banking platform demonstrating financial logic, double entry accounting, and concurrency safety.
 
----
-
-## 1. Setup Instructions
-
-### Backend
-
-1. Install deps and start Postgres in Docker:
-   - `cd backend`
-   - `npm install`
-   - `npm run db:up`
-2. Configure env (example):
-   - `export DATABASE_URL="postgres://postgres:postgres@localhost:5432/banking"`
-3. Run migrations and seed demo data:
-   - `npm run db:migrate`
-   - `npm run db:setup`
-4. Start API:
-   - `npm run start:dev` (default: `http://localhost:3001/api`)
-   - API Documentation (Swagger): `http://localhost:3001/api/docs`
-
-Database tooling (from `backend/`):
-
-- `npm run db:up` / `npm run db:down` – start/stop Postgres
-- `npm run db:migrate` – apply migrations
-- `npm run db:migrate:generate` – generate new migration from `scripts/schema.ts`
-- `npm run db:migrate:push` – push schema directly (development only)
-- `npm run db:setup` – seed demo user and accounts
-
-### Frontend
-
-1. Install deps:
-   - `cd frontend`
-   - `npm install`
-2. Start dev server:
-   - `npm run dev` (default: `http://localhost:5174`)
-
-By default the frontend talks to `http://localhost:3001/api` (see `src/api/client.ts`).
-
-### Test Users
-
-Seed script creates a demo user (for quick testing):
-
-| Email             | Password    |
-| ----------------- | ----------- |
-| alice@example.com | password123 |
-
-You can also register new users via the API or UI.
+**Tech Stack:** NestJS · Drizzle ORM · PostgreSQL · JWT · React 19 · TypeScript · Tailwind · WebSockets
 
 ---
 
-## 2. User Management Approach
+## User Management Approach
 
-**Chosen:** Registration + pre-seeded users
+**Chosen: Registration + Pre-seeded Test Users**
 
-- `POST /api/auth/register` – users can self-register.
-- `npm run db:setup` – seeds a demo user and their USD/EUR accounts.
-- Each user has:
-  - 1 USD account (initial: 1000.00)
-  - 1 EUR account (initial: 500.00)
-
-Authentication: JWT access token, validated by NestJS `JwtAuthGuard`.
-
----
-
-## 3. Core API Endpoints (Summary)
-
-All routes are under `/api`.
-
-**Auth**
-
-- `POST /auth/login`
-- `POST /auth/register`
-- `GET  /auth/profile` ("me")
-- `POST /auth/logout`
-
-**Accounts**
-
-- `GET /accounts` – list current user accounts + balances
-- `GET /accounts/:id` – account detail
-- `GET /accounts/:id/balance` – current balance
-
-**Transactions**
-
-- `POST /transactions/transfer` – same-currency transfer between accounts/users
-- `POST /transactions/exchange` – FX within user (USD↔EUR)
-- `GET  /transactions` – history with `page`, `limit`, `type`
-- `GET  /transactions/exchange-rates` – fixed FX rates
-- `GET  /transactions/verify-integrity` – ledger/balance consistency check
+- **Registration:** `/auth/register` with automatic USD ($1000) + EUR (€500) account creation
+- **Test Users:** Pre-seeded for easy evaluation
+  ```
+  alice@example.com | password123
+  bob@example.com   | password123
+  carol@example.com | password123
+  ```
 
 ---
 
-## 4. Double-Entry Ledger Design
+## Quick Start
 
-Tables (see `backend/scripts/schema.ts`):
+**Prerequisites:** Node.js, Docker
 
-- `users`
+Ensure docker running and env files present for frontend and backend
 
-  - Basic user info + credentials.
+```bash
+# Backend
+cd backend
+npm install
+npm run db:up        # Start PostgreSQL (Docker)
+npm run db:migrate   # Apply schema
+npm run db:setup     # Seed demo users
+npm run start:dev    # → http://localhost:3001/api
 
-- `accounts`
+# Frontend (new terminal)
+cd frontend
+npm install
+npm run dev          # → http://localhost:5174
+```
 
-  - `id`, `user_id`, `currency (USD|EUR)`, `balance numeric(18,2)`
-  - `balance` is a cached value derived from `ledger_entries` for performance.
+**Environment Files:**
 
-- `transactions`
+```bash
+# backend/.env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5433/banking
+JWT_SECRET=your-super-secure-jwt-secret-key-change-in-production-2025-banking-app
+FRONTEND_ORIGIN=http://localhost:5174
 
-  - High-level, user-facing record.
-  - Fields: `id`, `from_account_id?`, `to_account_id`, `amount`, `currency`, `type`, `status`, `description`, `idempotency_key`.
-  - One row per logical operation (transfer or exchange).
-
-- `ledger_entries`
-  - Authoritative audit trail.
-  - Fields: `id`, `transaction_id`, `account_id`, `amount`, `type`, `created_at`.
-  - **Double-entry rule:** for each `transaction_id`, the sum of `amount` over all its `ledger_entries` must be ~0.
-
-Implementation details:
-
-- `LedgerService.createLedgerEntries` rejects any batch where `Σ amount` is not ~0 (±0.01).
-- `TransactionsService` always writes **two** `ledger_entries` records per transaction:
-  - Transfer:
-    - Debit source account: `-amount`.
-    - Credit destination account: `+amount`.
-  - Exchange:
-    - Debit source currency: `-from_amount`.
-    - Credit target currency: `+to_amount` (FX-converted and rounded).
-- The `ledger_entries` table is the single source of truth; `accounts.balance` is updated from it.
+# frontend/.env
+VITE_API_URL=http://localhost:3001/api
+VITE_WS_URL=http://localhost:3001
+```
 
 ---
 
-## 5. Balance Consistency Strategy
+## Database Architecture
 
-Goal: keep `accounts.balance` fast to query but always reconcilable with the `ledger_entries` table.
+**5-Table Double-Entry System** with full audit trails:
 
-- On each transaction (`transfer` / `exchange`):
+```sql
+-- Core Tables
+users (id, email, password_hash, created_at)
+accounts (id, user_id, currency, balance, created_at)
+transactions (id, from_account_id, to_account_id, amount, currency, type, idempotency_key)
 
-  1. Begin a DB transaction.
-  2. Insert the `transactions` row.
-  3. Insert balanced `ledger_entries`.
-  4. For each affected account:
-     - Recalculate balance as `SUM(amount)` from `ledger_entries`.
-     - `UPDATE accounts SET balance = computed_balance`.
-  5. Commit.
+-- Double-Entry Ledger (Authoritative Source)
+ledger_entries (id, transaction_id, account_id, amount, type, description)
+  ↳ Every transaction creates TWO balanced entries (sum = 0)
+  ↳ Account balances calculated from ledger entries
 
-- All of the above happens using the same `PoolClient` and transaction, so it is **atomic**.
-- `LedgerService.verifyAllAccountBalances` and `verifyLedgerIntegrity` can be used to:
-  - Globally check that `accounts.balance` matches `ledger_entries` sums.
-  - Detect any unbalanced `transaction_id` groups.
+-- Compliance & Security
+audit_log (id, user_id, action, resource_type, ip_address, details)
+  ↳ Tracks LOGIN, TRANSFER, EXCHANGE actions with IP logging
+```
 
----
+**Double-Entry Mechanics:**
+Each financial transaction creates **exactly 2 ledger entries** that balance to zero:
 
-## 6. Design Decisions & Trade-Offs
+```sql
+-- Example: Alice transfers $100 to Bob
+INSERT INTO transactions (id, from_account_id, to_account_id, amount, currency, type)
+VALUES ('tx-123', 'alice-usd', 'bob-usd', 100.00, 'USD', 'TRANSFER');
 
-- **Postgres + numeric(18,2)** for money:
-  - Avoids floating-point errors, keeps two-decimal precision.
-- **Double-entry ledger** instead of direct balance mutations:
-  - Guarantees a full audit trail and easy reconciliation.
-- **Idempotency keys** per transaction:
-  - Prevent duplicate processing on retries.
-- **Row-level locking** on `accounts`:
-  - Prevents race conditions and double-spends.
-- **Balance cache on `accounts`**:
-  - Fast reads for UI; re-derived from the `ledger_entries` table after each transaction.
-- **Fixed FX rate in code (1 USD = 0.92 EUR)**:
-  - Simplifies the assessment; a real system would pull dynamic rates.
+-- Creates TWO balanced ledger entries:
+INSERT INTO ledger_entries VALUES
+  ('entry-1', 'tx-123', 'alice-usd', -100.00, 'DEBIT', 'Transfer to Bob'),   -- Alice loses $100
+  ('entry-2', 'tx-123', 'bob-usd',   +100.00, 'CREDIT', 'Transfer from Alice'); -- Bob gains $100
 
----
+-- Mathematical Proof: -100.00 + 100.00 = 0 ✅
+```
 
-## 7. Known Limitations / Incomplete Features
+**Currency Exchange Example:**
 
-- Only USD and EUR are supported (no multi-currency extension logic yet).
-- No UI-level 2FA or advanced security controls (rate limiting, IP throttling, etc.).
-- Reporting/analytics over the `ledger_entries` table are minimal (just basic history and integrity checks).
-- Test coverage is partial - not all services and controllers have comprehensive unit tests.
+```sql
+-- Alice exchanges $100 → €92 (rate: 1 USD = 0.92 EUR)
+INSERT INTO transactions (id, from_account_id, to_account_id, amount, currency, type)
+VALUES ('tx-456', 'alice-usd', 'alice-eur', 100.00, 'USD', 'EXCHANGE');
 
-Core financial flows, integrity, and UI are complete per the assessment.
+-- Creates TWO balanced ledger entries:
+INSERT INTO ledger_entries VALUES
+  ('entry-3', 'tx-456', 'alice-usd', -100.00, 'DEBIT', 'USD to EUR exchange'),   -- Alice loses $100
+  ('entry-4', 'tx-456', 'alice-eur', +92.00, 'CREDIT', 'USD to EUR exchange');  -- Alice gains €92
 
----
+-- Note: Different currencies but transaction integrity maintained
+```
 
-## 7.1 Minor Architectural Notes & Possible Improvements
+**Balance Consistency Strategy:**
 
-- **AuthService vs LedgerService for initial deposits**
-
-  - `AuthService.register` creates initial USD/EUR balances by inserting directly into `transactions` and `ledger_entries` within a single DB transaction. The primary transfer/exchange flows, however, go through `TransactionsService` and `LedgerService`, which also recalculate and persist `accounts.balance` explicitly.
-  - For a larger codebase, we might:
-    - Extract the "initial deposit" logic into a helper that reuses `TransactionsService`/`LedgerService`, or
-    - Clearly document that initial seeding relies on DB-level behavior, while runtime flows always use the services.
-
-- **Idempotency error handling surface**
-
-  - `TransactionsService.transfer` and `exchange` treat `idempotency_key` conflicts via Postgres error code `23505` and then fetch the existing transaction. In a production system, we might add structured logging and/or return a more explicit error payload when something unexpected happens around idempotency (e.g. malformed key, conflicting payloads).
-
-- **Frontend confirmation before processing**
-
-  - The frontend includes a generic `Modal` component and transaction forms, but the current implementation intentionally keeps the UX simple. A dedicated "Are you sure?" confirmation step for transfer/exchange could be added using this modal to align with the suggested "transaction confirmation" should-have.
+1. **Ledger as Source of Truth** - Balances derived from ledger entries
+2. **Atomic Transactions** - `SELECT ... FOR UPDATE` prevents race conditions
+3. **Concurrency Safety** - Ordered account locking prevents deadlocks
+4. **Audit Trail** - Immutable transaction history for compliance
+5. **Mathematical Integrity** - Every transaction's ledger entries sum to zero
 
 ---
 
-## 8. Deployment (Vercel + Render)
+## Transaction Processing
 
-This project is set up for a simple cloud deployment with:
+### Transfer Transaction Flow
 
-- **Backend** on **Render**
-- **Frontend** on **Vercel**
+**Step-by-Step Process (`backend/src/modules/transactions/transactions.service.ts`):**
 
-Update the URLs below to your actual deployment endpoints.
+```
+// 1. VALIDATION PHASE
+//    - Amount must be positive
+//    - Cannot transfer to same account
+//    Location: transactions.service.ts:transfer()
 
-### Backend (e.g. Render, Fly.io, Railway)
+// 2. IDEMPOTENCY CHECK
+//    - Check if transaction already exists
+//    - Prevent duplicate processing
+//    Location: transactions.service.ts:findTransactionByIdempotencyKey()
 
-- Use `backend/Dockerfile` and `render.yaml` as a starting point.
-- Provision a managed Postgres instance.
-- Set `DATABASE_URL` in the backend environment.
-- On deploy:
-  - Run migrations (`npm run db:migrate`).
-  - Optionally run seed (`npm run db:setup`) in non-production or demo environments.
+// 3. DEADLOCK-SAFE LOCKING
+//    - Sort account IDs for deterministic order
+//    - Lock accounts with SELECT FOR UPDATE
+//    Location: accounts.repository.ts:lockUserAccount()
 
-### Frontend (e.g. Vercel, Netlify)
+// 4. BUSINESS RULE VALIDATION
+//    - Verify same currency for transfers
+//    - Check account ownership
+//    Location: transactions.service.ts:transfer()
 
-- Deploy the `frontend` Vite app.
-- Configure environment variable for API base URL (if not using localhost).
-- Ensure CORS on backend allows the frontend origin.
+// 5. PRECISE BALANCE CHECK
+//    - Use Decimal.js for accuracy
+//    - Ensure sufficient funds
+//    Location: transactions.service.ts:transfer()
 
-Update this README with final deployment URLs, for example:
+// 6. CREATE TRANSACTION RECORD
+//    - Insert into transactions table
+//    - Generate unique transaction ID
+//    Location: transactions.repository.ts:insertTransfer()
 
-- Backend: `https://your-backend.example.com/api`
-- Frontend: `https://your-frontend.example.com`
+// 7. CREATE DOUBLE-ENTRY LEDGER ENTRIES
+//    - Debit sender account (-amount)
+//    - Credit receiver account (+amount)
+//    Location: ledger.service.ts:createLedgerEntries()
+
+// 8. RECALCULATE BALANCES FROM LEDGER
+//    - Sum ledger entries for each account
+//    - Update accounts.balance field
+//    Location: ledger.repository.ts:calculateAccountBalance()
+//             accounts.repository.ts:updateAccountBalance()
+
+// 9. COMMIT TRANSACTION
+//    - All operations succeed or fail together
+//    - Database transaction wrapper
+//    Location: shared/database/transaction.ts:withTransaction()
+```
+
+### Currency Exchange Flow
+
+**Cross-Currency Process (`backend/src/modules/transactions/transactions.service.ts`):**
+
+```
+// 1. DECIMAL CALCULATION
+//    - Precise exchange rate math
+//    - Round to 2 decimal places
+//    Location: transactions.service.ts:exchange()
+
+// 2. CURRENCY VALIDATION
+//    - Ensure different currencies
+//    - Validate exchange rate
+//    Location: transactions.service.ts:exchange()
+
+// 3. CROSS-CURRENCY LEDGER ENTRIES
+//    - Debit source currency account
+//    - Credit target currency account
+//    Location: ledger.service.ts:createCrossLedgerEntries()
+
+// 4. BALANCE UPDATES
+//    - Update both currency account balances
+//    - Maintain ledger integrity
+//    Location: ledger.repository.ts:calculateAccountBalance()
+```
+
+**Transaction Rollback Example:**
+
+```sql
+BEGIN TRANSACTION;
+    -- Step 1: Lock accounts
+    -- Step 2: Validate balances
+    -- Step 3: Create transaction record
+    -- Step 4: Insert ledger entries
+    -- Step 5: Update account balances
+
+    -- If ANY step fails:
+    ROLLBACK; -- All changes undone atomically
+
+    -- If ALL steps succeed:
+    COMMIT; -- All changes persisted together
+```
+
+### Concurrency Control
+
+**Database Locking (`backend/src/modules/accounts/accounts.repository.ts`):**
+
+```sql
+-- Deterministic account locking to prevent deadlocks
+SELECT * FROM accounts
+WHERE id IN (?, ?)
+ORDER BY id ASC
+FOR UPDATE;
+```
+
+**Simple Deadlock Prevention:**
+
+```typescript
+// Problem: Two users transferring to each other at the same time
+// Alice → Bob: Lock Alice, then Bob
+// Bob → Alice: Lock Bob, then Alice
+// Result: Both wait forever (deadlock)
+
+// Solution: Always lock accounts in the same order
+const accountsToLock = [account1, account2].sort();
+// Now both transactions lock accounts alphabetically
+// Alice → Bob: Lock Alice, then Bob
+// Bob → Alice: ALSO lock Alice first, then Bob
+// Result: No deadlock, transactions happen one after another
+```
+
+**Error Handling (`backend/src/modules/transactions/transactions.service.ts`):**
+
+```typescript
+// If PostgreSQL detects a deadlock (rare with our prevention)
+if (error.code === "40P01") {
+  throw "Transaction conflict detected. Please retry.";
+}
+
+// If user clicks "Transfer" button multiple times
+if (error.code === "23505") {
+  return existing_transaction; // Return the first successful transfer
+}
+```
+
+**Why This Matters:**
+
+- **Prevents system freezes** when many users transfer money simultaneously
+- **Handles double-clicks** gracefully (no duplicate transfers)
+- **Keeps money safe** even under heavy load
+
+**Real-Time Updates**
+
+**WebSocket Notifications (`backend/src/shared/gateways/balance.gateway.ts`):**
+
+```
+// After successful commit
+EMIT balance_update TO user_room
+EMIT transaction_notification TO affected_users
+```
+
+### Performance Optimizations
+
+**Database Indexing Strategy:**
+
+```sql
+-- Fast transaction history queries
+CREATE INDEX ON transactions(user_id, created_at DESC);
+CREATE INDEX ON ledger_entries(account_id, created_at DESC);
+
+-- Efficient idempotency checks
+CREATE UNIQUE INDEX ON transactions(idempotency_key)
+WHERE idempotency_key IS NOT NULL;
+```
+
+**Connection Pooling:**
+
+```
+DATABASE_POOL:
+    max_connections: 20
+    idle_timeout: 30_seconds
+    connection_timeout: 2_seconds
+    retry_attempts: 3
+```
 
 ---
 
-## 9. Answers to Key Design Questions
+## Core Features
 
-**1. How do you ensure transaction atomicity?**
+**Authentication & Accounts**
 
-- Each financial operation (`transfer`, `exchange`) runs inside a single Postgres transaction using a shared `PoolClient`.
-- We:
-  - Lock accounts (`SELECT ... FOR UPDATE`).
-  - Validate balances and currencies.
-  - Insert into `transactions`.
-  - Insert balanced `ledger_entries`.
-  - Recalculate and update `accounts.balance`.
-  - Commit.
-- Any failure triggers a rollback; no partial state is persisted.
+- JWT + httpOnly cookies, registration/login flows
+- Auto-created USD/EUR accounts per user
+- `/auth/register`, `/auth/login`, `/auth/me`
 
-**2. How do you prevent double-spending?**
+**Financial Operations**
 
-- Row-level locking on `accounts` prevents concurrent writes from racing.
-- Balance checks (`from_balance >= amount`) are performed **after** locking.
-- Idempotency keys:
-  - Unique index on `transactions.idempotency_key`.
-  - If the same key is re-used, the existing transaction is returned instead of re-processing.
+- Same-currency transfers with concurrency control
+- USD↔EUR exchange (1 USD = 0.92 EUR fixed rate)
+- `/transactions/transfer`, `/transactions/exchange`
 
-**3. How do you maintain consistency between ledger entries and account balances?**
+**Transaction History**
 
-- After inserting ledger entries for a transaction, we:
-  - Compute `SUM(amount)` per affected account from `ledger_entries`.
-  - Write that sum into `accounts.balance` within the same DB transaction.
-- `LedgerService.verifyAllAccountBalances` compares ledger sums vs `accounts.balance` for all accounts; `verifyLedgerIntegrity` exposes this via an endpoint.
+- Paginated history with type filters
+- Real-time balance updates via WebSockets
+- `/transactions?page=1&limit=10&type=transfer`
 
-**4. How do you handle decimal precision for different currencies?**
+**Frontend Dashboard**
 
-- All monetary fields use `numeric(18,2)` in Postgres (scale = 2).
-- Exchange amounts are rounded to 2 decimals using `Math.round(x * 100) / 100` before writing ledger entries.
-- Frontend uses helpers in `utils/formatters.ts` to display 2-decimal amounts.
+- Live USD/EUR balances, recent transactions
+- Transfer/exchange forms with validation
+- Real-time updates, transaction history with filters
 
-**5. What indexing strategy do you use for the ledger_entries table?**
+---
 
-- `ledger_entries` indices:
-  - `(account_id, created_at)` – fast per-account history and balance computations.
-  - `transaction_id` – fast retrieval and aggregation per transaction.
-- `transactions` indices:
-  - `from_account_id`, `to_account_id`, `created_at` – efficient history and lookups.
-  - Unique index on `idempotency_key` (partial) – enforces idempotency.
+## Design Decisions & Trade-offs
 
-**6. How do you verify that balances are correctly synchronized?**
+| **Decision**             | **Rationale**                                   | **Trade-off**                     |
+| ------------------------ | ----------------------------------------------- | --------------------------------- |
+| **PostgreSQL**           | ACID compliance, decimal precision, row locking | More complex vs SQLite            |
+| **Drizzle ORM**          | Type-safe queries, lightweight, TS integration  | Less mature vs Prisma             |
+| **DECIMAL(18,2)**        | Avoid floating-point errors in finance          | Storage overhead vs accuracy      |
+| **Fixed Exchange Rate**  | Simplifies assessment implementation            | vs Real-time API integration      |
+| **JWT httpOnly Cookies** | XSS protection + stateless auth                 | Complex CORS vs security          |
+| **SELECT FOR UPDATE**    | Prevents race conditions & deadlocks            | Performance impact vs consistency |
 
-- Programmatic checks in `LedgerService.verifyAllAccountBalances` and `verifyLedgerIntegrity`:
-  - For each account: compare `accounts.balance` with `SUM(ledger_entries.amount)`.
-  - For each `transaction_id`: ensure `SUM(amount)` over its entries ~ 0.
-- `GET /api/transactions/verify-integrity` exposes these checks.
-- Integration tests (`transactions.integration.spec.ts`) assert:
-  - Balances change exactly by the debited/credited amounts.
-  - Each transaction produces a balanced pair of ledger entries.
+**Time-Boxed Limitations:**
 
-**7. How would you scale this system for millions of users?**
+- UI: Minimal design focused on functionality
+- Testing: 35 tests covering critical logic (vs full E2E coverage)
+- Static config: Hardcoded rates (vs dynamic configuration)
+- Basic monitoring: Health checks only (vs full observability)
 
-- **Database:**
-  - Add further indices for common queries.
-  - Partition `ledger_entries` and `transactions` by time or account ranges.
-  - Move heavy reporting/reconciliation jobs to read replicas.
-- **Application:**
-  - Run multiple stateless NestJS instances behind a load balancer.
-  - Use connection pooling and tune Postgres.
-- **Caching & queues:**
-  - Cache frequently-read balances or summaries in Redis.
-  - Offload non-critical tasks (notifications, heavy audits) to background workers using a queue.
-- **Observability:**
-  - Add metrics (failed transfers, unbalanced ledger checks, slow queries).
-  - Use logs and traces to monitor latency and error rates.
+---
+
+## Deployment
+
+Due to time constraints I did not complete this step.
+
+I have done this before and is a simple setup should be as follows.
+
+### Backend (Render)
+
+```bash
+# 1. Create PostgreSQL database on Render
+# 2. Set environment variables:
+DATABASE_URL=postgresql://user:pass@dpg-xxx.render.com:5432/banking_db
+JWT_SECRET=your-super-secure-jwt-secret-key-change-in-production-2025-banking-app
+NODE_ENV=production
+FRONTEND_ORIGIN=https://your-frontend.vercel.app
+
+# 3. Deploy with auto-migration
+Build: cd backend && npm install && npm run build
+Start: cd backend && npm run db:migrate && npm start
+```
+
+### Frontend (Vercel)
+
+```bash
+# 1. Set environment variables:
+VITE_API_URL=https://your-backend.onrender.com/api
+VITE_WS_URL=https://your-backend.onrender.com
+
+# 2. Deploy
+cd frontend && npx vercel --prod
+```
+
+**Database Setup:** Migrations run automatically on deployment. Run `npm run db:setup` once in Render shell for demo users.
+
+---
+
+## Testing & Validation
+
+**Test Coverage (35 files):**
+
+- **Backend:** Services, repositories, controllers, integration tests
+- **Frontend:** Components, hooks, contexts, utility functions
+- **Focus:** Financial logic, concurrency control, validation, error handling
+
+```bash
+# Backend Testing
+cd backend && npm test        # All tests
+npm run test:cov             # Coverage report
+
+# Frontend Testing
+cd frontend && npm test       # React tests
+npm run test:watch           # Watch mode
+```
+
+**Key Test Areas:** Double-entry integrity, concurrent safety, decimal precision, authentication flows, error boundaries.
+
+---
+
+## Additional Production Features
+
+**Security & Monitoring:**
+
+- Helmet.js security headers, input sanitization
+- Health check endpoint (`/api/health`)
+- Comprehensive audit logging with IP tracking
+- Environment validation on startup
+
+**Real-Time & Performance:**
+
+- WebSocket gateway with JWT authentication
+- Strategic database indexing (account_id, created_at)
+- Connection pooling, partial unique indexes
+- User-specific WebSocket rooms
+
+**Development Experience:**
+
+- Docker Compose for one-command setup
+- TypeScript throughout, centralized constants
+- Decimal.js for accurate financial calculations
+- Swagger API docs at `/api/docs`
+- Proper error boundaries and loading states
+
+---
+
+## Related Projects
+
+**🎲 BetFlix – Basic web3 Auth site**  
+[https://github.com/HenryJohnPeters/BetFlix](https://github.com/HenryJohnPeters/BetFlix)
+
+**🏛️ HenrysClub – Basic Lightweight TypeScript Express DynamoDb API**  
+[https://github.com/HenryJohnPeters/HenrysClub](https://github.com/HenryJohnPeters/HenrysClub)
 
 ---

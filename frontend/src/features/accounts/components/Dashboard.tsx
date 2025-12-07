@@ -1,16 +1,19 @@
 import { useState, useEffect } from "react";
-import { Info } from "lucide-react";
+import { ArrowRightLeft } from "lucide-react";
 import LoadingSpinner from "../../../components/ui/LoadingSpinner";
 import ErrorAlert from "../../../components/ui/ErrorAlert/ErrorAlert";
+import SuccessToast from "../../../components/ui/SuccessToast";
+import { ToastContainer } from "../../../components/ui/Toast/Toast";
 import DashboardHeader from "./DashboardHeader";
 import AccountsGrid from "./AccountsGrid";
 import ExchangeRates from "./ExchangeRates";
-import TransferModal from "../../transactions/components/TransferModal";
-import ExchangeModal from "../../transactions/components/ExchangeModal";
+import TransferModal from "../../transactions/components/modals/TransferModal";
+import ExchangeModal from "../../transactions/components/modals/ExchangeModal";
 import TransactionList from "../../transactions/components/TransactionList";
-import TransactionReceiptModal from "../../transactions/components/TransactionReceiptModal";
+import TransactionReceiptModal from "../../transactions/components/modals/TransactionReceiptModal";
 import { useDashboard } from "../hooks/useDashboard";
 import { useWebSocket } from "../../../hooks/useWebSocket";
+import { useToast } from "../../../hooks/useToast";
 import { Transaction } from "../../../models/Banking";
 
 const Dashboard = () => {
@@ -19,7 +22,9 @@ const Dashboard = () => {
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [selectedTransaction, setSelectedTransaction] =
     useState<Transaction | null>(null);
-  const [notifications, setNotifications] = useState<string[]>([]);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const { toasts, showToast, dismissToast } = useToast(5, 5000);
 
   const {
     accounts,
@@ -64,16 +69,11 @@ const Dashboard = () => {
       // Refresh dashboard data to get updated balances
       refreshData();
 
-      // Show notification
-      const notification = `Balance updated: ${update.newBalance} ${update.currency}`;
-      setNotifications((prev) => [...prev.slice(-4), notification]); // Keep last 5 notifications
-
-      // Auto-hide notification after 5 seconds
-      setTimeout(() => {
-        setNotifications((prev) => prev.filter((n) => n !== notification));
-      }, 5000);
+      showToast(`Balance updated: ${update.newBalance} ${update.currency}`, {
+        type: "info",
+      });
     });
-  }, [onBalanceUpdate, refreshData]);
+  }, [onBalanceUpdate, refreshData, showToast]);
 
   // Handle real-time transaction notifications
   useEffect(() => {
@@ -82,16 +82,11 @@ const Dashboard = () => {
       // Refresh dashboard data to show new transaction
       refreshData();
 
-      // Show notification
-      const message = `New transaction: ${notification.transaction.type}`;
-      setNotifications((prev) => [...prev.slice(-4), message]);
-
-      // Auto-hide notification after 5 seconds
-      setTimeout(() => {
-        setNotifications((prev) => prev.filter((n) => n !== message));
-      }, 5000);
+      showToast(`New transaction: ${notification.transaction.type}`, {
+        type: "info",
+      });
     });
-  }, [onTransactionNotification, refreshData]);
+  }, [onTransactionNotification, refreshData, showToast]);
 
   const handleTransactionClick = (transaction: Transaction) => {
     setSelectedTransaction(transaction);
@@ -101,17 +96,30 @@ const Dashboard = () => {
   const handleTransferSuccess = async (result: any) => {
     await handleTransfer(result);
     setShowTransferModal(false);
+    setSuccessMessage(
+      `Transfer of ${result.amount} ${result.currency} completed successfully!`
+    );
+    // Auto-refresh to show updated balances
+    setTimeout(() => refreshData(), 500);
   };
 
   const handleExchangeSuccess = async (result: any) => {
     await handleExchange(result);
     setShowExchangeModal(false);
+    setSuccessMessage(`Currency exchange completed successfully!`);
+    // Auto-refresh to show updated balances
+    setTimeout(() => refreshData(), 500);
   };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <LoadingSpinner />
+        <div className="text-center">
+          <LoadingSpinner />
+          <p className="mt-4 text-gray-600 animate-pulse-subtle">
+            Loading your accounts...
+          </p>
+        </div>
       </div>
     );
   }
@@ -119,6 +127,13 @@ const Dashboard = () => {
   return (
     <div className="space-y-6">
       {error && <ErrorAlert message={error} onClose={clearError} />}
+
+      {successMessage && (
+        <SuccessToast
+          message={successMessage}
+          onClose={() => setSuccessMessage(null)}
+        />
+      )}
 
       {connectionError && (
         <ErrorAlert
@@ -143,22 +158,8 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Real-time Notifications */}
-      {notifications.length > 0 && (
-        <div className="fixed top-4 right-4 z-50 space-y-2">
-          {notifications.map((notification, index) => (
-            <div
-              key={index}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg transform transition-all duration-300 ease-in-out animate-pulse"
-            >
-              <div className="flex items-center space-x-2">
-                <Info className="w-4 h-4" />
-                <span className="text-sm font-medium">{notification}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Real-time Notifications using reusable hook */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       {/* Account Overview */}
       <div>
@@ -170,13 +171,55 @@ const Dashboard = () => {
       </div>
 
       {/* Exchange Rates */}
-      {exchangeRates && <ExchangeRates rates={exchangeRates} />}
+      {exchangeRates && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+          <div className="p-6 border-b border-gray-200">
+            <h2 className="text-xl font-semibold text-gray-900">
+              Current Exchange Rates
+            </h2>
+            <p className="text-gray-600 text-sm mt-1">
+              Live market rates for currency conversion
+            </p>
+          </div>
+          <div className="p-6">
+            <ExchangeRates rates={exchangeRates} />
+          </div>
+        </div>
+      )}
 
       {/* Recent Transactions */}
-      <TransactionList
-        transactions={transactions}
-        onTransactionClick={handleTransactionClick}
-      />
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="px-6 py-5 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-blue-100 rounded-lg">
+                <ArrowRightLeft className="h-5 w-5 text-blue-600" />
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">
+                  Recent Transactions
+                </h2>
+                <p className="text-gray-600 text-sm">
+                  Your latest activity across all accounts
+                </p>
+              </div>
+            </div>
+            <div className="text-sm text-gray-500">
+              {transactions.length} total
+            </div>
+          </div>
+        </div>
+
+        <div className="p-0">
+          <TransactionList
+            transactions={transactions}
+            onTransactionClick={handleTransactionClick}
+            showViewAll={true}
+            viewAllHref="/history"
+            title=""
+          />
+        </div>
+      </div>
 
       {/* Modals */}
       <TransferModal

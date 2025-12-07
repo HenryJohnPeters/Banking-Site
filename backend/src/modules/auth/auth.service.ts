@@ -6,7 +6,7 @@ import { User, CreateUserDto, LoginDto } from "../../models/User";
 import { Currency } from "../../models/Account";
 import { v4 as uuidv4 } from "uuid";
 import { LedgerService } from "../ledger/ledger.service";
-import { LedgerEntryInput } from "../../models/Ledger";
+import { INITIAL_BALANCES, BCRYPT_SALT_ROUNDS } from "../../shared/constants";
 
 @Injectable()
 export class AuthService {
@@ -14,18 +14,18 @@ export class AuthService {
 
   constructor(
     private jwtService: JwtService,
-    private readonly ledgerService: LedgerService
+    private readonly ledgerService: LedgerService,
   ) {}
 
   async register(
-    createUserDto: CreateUserDto
+    createUserDto: CreateUserDto,
   ): Promise<{ user: Omit<User, "password_hash">; token: string }> {
     const { email, password, first_name, last_name } = createUserDto;
 
     // Check if user already exists
     const existingUser = await db.query(
       "SELECT id FROM users WHERE email = $1",
-      [email.toLowerCase()]
+      [email.toLowerCase()],
     );
 
     if (existingUser.rows.length > 0) {
@@ -33,8 +33,7 @@ export class AuthService {
     }
 
     // Hash password
-    const saltRounds = 10;
-    const password_hash = await bcrypt.hash(password, saltRounds);
+    const password_hash = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
     const userId = uuidv4();
 
     const client = await db.getPool().connect();
@@ -45,7 +44,7 @@ export class AuthService {
       // Create user
       const userResult = await client.query(
         "INSERT INTO users (id, email, password_hash, first_name, last_name) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, first_name, last_name, created_at, updated_at",
-        [userId, email.toLowerCase(), password_hash, first_name, last_name]
+        [userId, email.toLowerCase(), password_hash, first_name, last_name],
       );
 
       const user = userResult.rows[0];
@@ -56,52 +55,60 @@ export class AuthService {
 
       await client.query(
         "INSERT INTO accounts (id, user_id, currency, balance) VALUES ($1, $2, $3, 0.00), ($4, $2, $5, 0.00)",
-        [usdAccountId, userId, Currency.USD, eurAccountId, Currency.EUR]
+        [usdAccountId, userId, Currency.USD, eurAccountId, Currency.EUR],
       );
 
       // Create initial deposit transactions
       const usdDepositId = uuidv4();
       const eurDepositId = uuidv4();
-      const initialUsdBalance = 1000.0;
-      const initialEurBalance = 500.0;
+      const initialUsdBalance = INITIAL_BALANCES.USD;
+      const initialEurBalance = INITIAL_BALANCES.EUR;
 
       // USD initial deposit transaction
       await client.query(
         `INSERT INTO transactions (id, to_account_id, amount, currency, type, status, description)
          VALUES ($1, $2, $3, $4, 'DEPOSIT', 'COMPLETED', 'Initial account balance')`,
-        [usdDepositId, usdAccountId, initialUsdBalance, Currency.USD]
+        [usdDepositId, usdAccountId, initialUsdBalance, Currency.USD],
       );
 
       // EUR initial deposit transaction
       await client.query(
         `INSERT INTO transactions (id, to_account_id, amount, currency, type, status, description)
          VALUES ($1, $2, $3, $4, 'DEPOSIT', 'COMPLETED', 'Initial account balance')`,
-        [eurDepositId, eurAccountId, initialEurBalance, Currency.EUR]
+        [eurDepositId, eurAccountId, initialEurBalance, Currency.EUR],
       );
 
-      // Create ledger entries using the shared ledger_entries table and service
-      const initialEntries: LedgerEntryInput[] = [
-        {
-          transaction_id: usdDepositId,
-          account_id: usdAccountId,
-          amount: initialUsdBalance,
-          description: `Initial deposit of $${initialUsdBalance}`,
-        },
-        {
-          transaction_id: eurDepositId,
-          account_id: eurAccountId,
-          amount: initialEurBalance,
-          description: `Initial deposit of ${initialEurBalance}`,
-        },
-      ];
+      // Create ledger entries directly (deposits from outside the system don't need to balance)
+      // Following the same pattern as the seed script
+      await client.query(
+        "INSERT INTO ledger_entries (id, account_id, transaction_id, amount, type, description) VALUES ($1, $2, $3, $4, $5, $6)",
+        [
+          uuidv4(),
+          usdAccountId,
+          usdDepositId,
+          initialUsdBalance,
+          "CREDIT",
+          `Initial deposit of $${initialUsdBalance}`,
+        ],
+      );
 
-      await this.ledgerService.createLedgerEntries(initialEntries, client);
+      await client.query(
+        "INSERT INTO ledger_entries (id, account_id, transaction_id, amount, type, description) VALUES ($1, $2, $3, $4, $5, $6)",
+        [
+          uuidv4(),
+          eurAccountId,
+          eurDepositId,
+          initialEurBalance,
+          "CREDIT",
+          `Initial deposit of €${initialEurBalance}`,
+        ],
+      );
 
       // Recalculate and persist account balances from ledger_entries, same as TransactionsService
       for (const accountId of [usdAccountId, eurAccountId]) {
         const { rows } = await client.query(
           `SELECT COALESCE(SUM(amount), 0) as balance FROM ledger_entries WHERE account_id = $1`,
-          [accountId]
+          [accountId],
         );
         const balance = parseFloat(rows[0].balance);
         await client.query(`UPDATE accounts SET balance = $1 WHERE id = $2`, [
@@ -127,14 +134,14 @@ export class AuthService {
   }
 
   async login(
-    loginDto: LoginDto
+    loginDto: LoginDto,
   ): Promise<{ user: Omit<User, "password_hash">; token: string }> {
     const { email, password } = loginDto;
 
     try {
       const result = await db.query(
         "SELECT id, email, password_hash, first_name, last_name, created_at, updated_at FROM users WHERE email = $1",
-        [email.toLowerCase()]
+        [email.toLowerCase()],
       );
 
       if (result.rows.length === 0) {
@@ -144,7 +151,7 @@ export class AuthService {
       const user = result.rows[0];
       const isPasswordValid = await bcrypt.compare(
         password,
-        user.password_hash
+        user.password_hash,
       );
 
       if (!isPasswordValid) {
@@ -156,7 +163,8 @@ export class AuthService {
       const token = this.jwtService.sign(payload);
 
       // Remove password hash from response
-      const { password_hash, ...userWithoutPassword } = user;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { password_hash: _password_hash, ...userWithoutPassword } = user;
 
       return { user: userWithoutPassword, token };
     } catch (error) {
@@ -168,11 +176,11 @@ export class AuthService {
   }
 
   async validateUser(
-    userId: string
+    userId: string,
   ): Promise<Omit<User, "password_hash"> | null> {
     const result = await db.query(
       "SELECT id, email, first_name, last_name, created_at, updated_at FROM users WHERE id = $1",
-      [userId]
+      [userId],
     );
 
     return result.rows.length > 0 ? result.rows[0] : null;

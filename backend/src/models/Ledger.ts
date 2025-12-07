@@ -2,7 +2,8 @@ export interface LedgerEntry {
   id: string;
   transaction_id: string;
   account_id: string;
-  amount: number; // Positive for debits, negative for credits
+  amount: number; // Positive for credits, negative for debits
+  type: string; // CREDIT or DEBIT
   description: string;
   created_at: Date;
 }
@@ -11,6 +12,7 @@ export interface LedgerEntryInput {
   transaction_id: string;
   account_id: string;
   amount: number;
+  type: string; // CREDIT or DEBIT
   description: string;
 }
 

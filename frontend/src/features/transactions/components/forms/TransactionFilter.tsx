@@ -1,5 +1,5 @@
-import { TransactionType } from "../../../models/Banking";
-import Card from "../../../components/ui/Card/Card";
+import { TransactionType } from "../../../../models/Banking";
+import Card from "../../../../components/ui/Card/Card";
 
 interface TransactionFilterProps {
   selectedType: TransactionType | "";

@@ -18,7 +18,7 @@ const Button = ({
   ...props
 }: ButtonProps) => {
   const baseClasses =
-    "font-medium rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-2 transition-all duration-200 transform active:scale-[0.98] relative overflow-hidden";
+    "font-medium rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors transition-shadow duration-200 relative overflow-hidden";
 
   const variants = {
     primary:
@@ -45,7 +45,11 @@ const Button = ({
         ${baseClasses}
         ${variants[variant]}
         ${sizes[size]}
-        ${isDisabled ? "opacity-60 cursor-not-allowed transform-none" : ""}
+        ${
+          isDisabled
+            ? "opacity-60 cursor-not-allowed"
+            : "hover:scale-[1.02] active:scale-[0.98] transition-transform"
+        }
         ${className}
       `.trim()}
       disabled={isDisabled}

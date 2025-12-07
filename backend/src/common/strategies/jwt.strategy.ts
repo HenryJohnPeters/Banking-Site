@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { PassportStrategy } from "@nestjs/passport";
 import { ConfigService } from "@nestjs/config";
-import { ExtractJwt, Strategy } from "passport-jwt";
+import { Strategy } from "passport-jwt";
 import { AuthService } from "../../modules/auth/auth.service";
 import { Request } from "express";
 
@@ -9,24 +9,25 @@ import { Request } from "express";
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     private authService: AuthService,
-    private configService: ConfigService
+    private configService: ConfigService,
   ) {
     super({
-      // Only use httpOnly cookies - no Authorization header support
+      // Extract JWT ONLY from httpOnly cookies (most secure for browsers)
       jwtFromRequest: (request: Request) => {
         let token = null;
+
         if (request && request.cookies) {
           token = request.cookies["banking_token"];
         }
+
         return token;
       },
       ignoreExpiration: false,
-      secretOrKey:
-        configService.get<string>("JWT_SECRET") || "fallback-secret-key",
+      secretOrKey: configService.get<string>("JWT_SECRET"),
     });
   }
 
-  async validate(payload: any) {
+  async validate(payload: { sub: string; iat: number; exp: number }) {
     // Enhanced validation for banking security
     if (!payload.sub || !payload.iat || !payload.exp) {
       throw new UnauthorizedException("Invalid token structure");
@@ -44,6 +45,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException("User not found");
     }
 
-    return user;
+    // Return user with sub property for compatibility with controllers
+    return { ...user, sub: payload.sub };
   }
 }

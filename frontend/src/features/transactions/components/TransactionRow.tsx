@@ -1,10 +1,7 @@
 import { Transaction } from "../../../models/Banking";
-import {
-  formatCurrency,
-  formatDate,
-  getTransactionIcon,
-} from "../../../utils/formatters";
+import { formatDate, getTransactionIcon } from "../../../utils/formatters";
 import StatusBadge from "../../../components/ui/StatusBadge/StatusBadge";
+import { formatTransactionDisplay } from "../utils/transactionFormatters";
 
 interface TransactionRowProps {
   transaction: Transaction;
@@ -15,13 +12,7 @@ const TransactionRow = ({
   transaction,
   onTransactionClick,
 }: TransactionRowProps) => {
-  const getTransactionColor = (transaction: Transaction) => {
-    return transaction.from_account_id ? "text-red-600" : "text-green-600";
-  };
-
-  const getAmountPrefix = (transaction: Transaction) => {
-    return transaction.from_account_id ? "-" : "+";
-  };
+  const displayInfo = formatTransactionDisplay(transaction);
 
   const handleClick = () => {
     if (onTransactionClick) {
@@ -56,11 +47,9 @@ const TransactionRow = ({
         <StatusBadge status={transaction.type} type="transaction-type" />
       </td>
       <td className="px-6 py-4 whitespace-nowrap">
-        <div
-          className={`text-sm font-medium ${getTransactionColor(transaction)}`}
-        >
-          {getAmountPrefix(transaction)}
-          {formatCurrency(transaction.amount, transaction.currency)}
+        <div className={`text-sm font-medium ${displayInfo.color}`}>
+          {displayInfo.prefix}
+          {displayInfo.formattedAmount}
         </div>
       </td>
       <td className="px-6 py-4 whitespace-nowrap">

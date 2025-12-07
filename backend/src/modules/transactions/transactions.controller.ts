@@ -20,7 +20,6 @@ import {
   ApiResponse,
   ApiBody,
   ApiQuery,
-  ApiBearerAuth,
 } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
 import { TransactionsService } from "./transactions.service";
@@ -32,15 +31,15 @@ import {
   TransactionType,
   PagedResult,
 } from "../../models/Transaction";
+import { EXCHANGE_RATES } from "../../shared/constants";
 
 @ApiTags("Transactions")
-@ApiBearerAuth()
 @Controller("transactions")
 @UseGuards(JwtAuthGuard)
 export class TransactionsController {
   constructor(
     private readonly transactionsService: TransactionsService,
-    private readonly ledgerService: LedgerService
+    private readonly ledgerService: LedgerService,
   ) {}
 
   @Post("transfer")
@@ -109,35 +108,42 @@ export class TransactionsController {
   @HttpCode(HttpStatus.CREATED)
   @UsePipes(new ValidationPipe({ transform: true }))
   async transfer(
-    @Request() req: any,
+    @Request() req: { user: { sub: string } },
     @Body() transferDto: TransferDto,
-    @Ip() ipAddress: string
+    @Ip() ipAddress: string,
   ): Promise<Transaction> {
     return this.transactionsService.transfer(
       req.user.sub,
       transferDto,
-      ipAddress
+      ipAddress,
     );
   }
 
   @Post("exchange")
   @ApiOperation({
     summary: "Exchange currency between user accounts",
-    description:
-      "Exchange money between USD and EUR accounts for the same user. Uses fixed exchange rate: 1 USD = 0.92 EUR",
+    description: `Exchange money between USD and EUR accounts for the same user. Uses fixed exchange rate: 1 USD = ${EXCHANGE_RATES.USD_TO_EUR} EUR`,
   })
   @ApiBody({
-    type: ExchangeDto,
-    description: "Exchange details including accounts, amount, and rate",
-    examples: {
-      example1: {
-        summary: "USD to EUR Exchange",
-        description: "Exchange $100 USD to EUR",
-        value: {
-          from_account_id: "550e8400-e29b-41d4-a716-446655440000",
-          to_account_id: "550e8400-e29b-41d4-a716-446655440001",
-          from_amount: 100.0,
-          exchange_rate: 0.92,
+    schema: {
+      type: "object",
+      properties: {
+        from_account_id: {
+          type: "string",
+          format: "uuid",
+          description: "Source account ID (must belong to user)",
+        },
+        to_account_id: {
+          type: "string",
+          format: "uuid",
+          description: "Destination account ID (must belong to user)",
+        },
+        from_amount: { type: "number", example: 100.0 },
+        exchange_rate: { type: "number", example: EXCHANGE_RATES.USD_TO_EUR },
+        description: { type: "string", example: "Convert to EUR" },
+        idempotency_key: {
+          type: "string",
+          example: "exchange-unique-key-123",
         },
       },
     },
@@ -168,14 +174,14 @@ export class TransactionsController {
   @HttpCode(HttpStatus.CREATED)
   @UsePipes(new ValidationPipe({ transform: true }))
   async exchange(
-    @Request() req: any,
+    @Request() req: { user: { sub: string } },
     @Body() exchangeDto: ExchangeDto,
-    @Ip() ipAddress: string
+    @Ip() ipAddress: string,
   ): Promise<Transaction> {
     return this.transactionsService.exchange(
       req.user.sub,
       exchangeDto,
-      ipAddress
+      ipAddress,
     );
   }
 
@@ -219,11 +225,11 @@ export class TransactionsController {
     },
   })
   async getTransactionHistory(
-    @Request() req: any,
+    @Request() req: { user: { sub: string } },
     @Query("page", new ParseIntPipe({ optional: true })) page: number = 1,
     @Query("limit", new ParseIntPipe({ optional: true })) limit: number = 20,
     @Query("type", new ParseEnumPipe(TransactionType, { optional: true }))
-    type?: TransactionType
+    type?: TransactionType,
   ): Promise<PagedResult<Transaction>> {
     // Limit maximum page size
     const maxLimit = Math.min(limit, 100);
@@ -231,26 +237,30 @@ export class TransactionsController {
       req.user.sub,
       page,
       maxLimit,
-      type
+      type,
     );
   }
 
   @Get("exchange-rates")
   @ApiOperation({
     summary: "Get current exchange rates",
-    description: "Retrieve the current exchange rates between USD and EUR",
+    description: "Returns the current exchange rates between USD and EUR",
   })
   @ApiResponse({
     status: 200,
-    description: "Exchange rates retrieved successfully",
+    description: "Current exchange rates",
     schema: {
-      example: {
-        USD_TO_EUR: 0.92,
-        EUR_TO_USD: 1.087,
+      type: "object",
+      properties: {
+        USD_TO_EUR: { type: "number", example: EXCHANGE_RATES.USD_TO_EUR },
+        EUR_TO_USD: { type: "number", example: EXCHANGE_RATES.EUR_TO_USD },
       },
     },
   })
-  async getExchangeRates() {
+  async getExchangeRates(): Promise<{
+    USD_TO_EUR: number;
+    EUR_TO_USD: number;
+  }> {
     return this.transactionsService.getExchangeRates();
   }
 

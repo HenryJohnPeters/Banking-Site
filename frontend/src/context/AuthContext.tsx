@@ -81,9 +81,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     try {
       // Call logout endpoint to clear the httpOnly cookie
       await authApi.logout();
-    } catch {
-      // Ignore errors during logout
-      console.log("Logout API call failed, but clearing local state");
+      console.log("Logged out successfully");
+    } catch (error) {
+      // Ignore errors during logout but log them
+      console.log("Logout API call failed, but clearing local state", error);
     } finally {
       // Clear user data from React state only
       setUser(null);

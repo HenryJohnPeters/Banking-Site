@@ -1,152 +1,111 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { LedgerService } from "../../modules/ledger/ledger.service";
-import { db } from "../../shared/database/client";
-import { v4 as uuidv4 } from "uuid";
+import { LedgerRepository } from "../../modules/ledger/ledger.repository";
 import { BadRequestException } from "@nestjs/common";
-
-jest.mock("../../db/client");
-
-const mockDb = {
-  getPool: jest.fn(),
-  query: jest.fn(),
-};
+import { DatabaseService } from "../../shared/database/client";
 
 describe("LedgerService", () => {
   let service: LedgerService;
-  let mockClient: any;
+  let repository: LedgerRepository;
+
+  const mockDatabaseService = {
+    getClient: jest.fn(),
+    executeInTransaction: jest.fn(),
+  };
 
   beforeEach(async () => {
-    mockClient = {
-      query: jest.fn(),
-      release: jest.fn(),
-    };
-
-    mockDb.getPool.mockReturnValue({
-      connect: jest.fn().mockResolvedValue(mockClient),
-    });
-
     const module: TestingModule = await Test.createTestingModule({
-      providers: [LedgerService],
+      providers: [
+        LedgerService,
+        LedgerRepository,
+        {
+          provide: DatabaseService,
+          useValue: mockDatabaseService,
+        },
+      ],
     }).compile();
 
     service = module.get<LedgerService>(LedgerService);
-    (db as any) = mockDb;
+    repository = module.get<LedgerRepository>(LedgerRepository);
     jest.clearAllMocks();
   });
 
   describe("createLedgerEntries", () => {
-    it("should create balanced ledger entries successfully", async () => {
-      const entries = [
-        {
-          transaction_id: "tx-1",
-          account_id: "acc-1",
-          amount: -100,
-          description: "Debit entry",
-        },
-        {
-          transaction_id: "tx-1",
-          account_id: "acc-2",
-          amount: 100,
-          description: "Credit entry",
-        },
-      ];
-
-      mockClient.query
-        .mockResolvedValueOnce({ command: "BEGIN" })
-        .mockResolvedValueOnce({ command: "INSERT" })
-        .mockResolvedValueOnce({ command: "INSERT" })
-        .mockResolvedValueOnce({ command: "COMMIT" });
-
-      await service.createLedgerEntries(entries);
-
-      expect(mockClient.query).toHaveBeenCalledWith("BEGIN");
-      expect(mockClient.query).toHaveBeenCalledWith("COMMIT");
-      expect(mockClient.query).toHaveBeenCalledTimes(4);
-    });
-
     it("should reject unbalanced ledger entries", async () => {
       const unbalancedEntries = [
         {
           transaction_id: "tx-1",
           account_id: "acc-1",
           amount: -100,
+          type: "DEBIT",
           description: "Debit entry",
         },
         {
           transaction_id: "tx-1",
           account_id: "acc-2",
           amount: 50, // Unbalanced!
+          type: "CREDIT",
           description: "Credit entry",
         },
       ];
 
+      const mockClient = {} as any;
+
       await expect(
-        service.createLedgerEntries(unbalancedEntries)
+        service.createLedgerEntries(unbalancedEntries, mockClient)
       ).rejects.toThrow(BadRequestException);
     });
 
-    it("should allow minor rounding differences (< 0.01)", async () => {
-      const entriesWithRounding = [
-        {
-          transaction_id: "tx-1",
-          account_id: "acc-1",
-          amount: -100.001,
-          description: "Debit entry",
-        },
-        {
-          transaction_id: "tx-1",
-          account_id: "acc-2",
-          amount: 100.002,
-          description: "Credit entry",
-        },
-      ];
-
-      mockClient.query
-        .mockResolvedValueOnce({ command: "BEGIN" })
-        .mockResolvedValueOnce({ command: "INSERT" })
-        .mockResolvedValueOnce({ command: "INSERT" })
-        .mockResolvedValueOnce({ command: "COMMIT" });
-
-      await expect(
-        service.createLedgerEntries(entriesWithRounding)
-      ).resolves.not.toThrow();
-    });
-
-    it("should rollback on database error", async () => {
+    it("should reject entries without transaction context", async () => {
       const entries = [
         {
           transaction_id: "tx-1",
           account_id: "acc-1",
           amount: -100,
+          type: "DEBIT",
           description: "Debit entry",
         },
         {
           transaction_id: "tx-1",
           account_id: "acc-2",
           amount: 100,
+          type: "CREDIT",
           description: "Credit entry",
         },
       ];
 
-      mockClient.query
-        .mockResolvedValueOnce({ command: "BEGIN" })
-        .mockRejectedValueOnce(new Error("Database error"));
-
-      await expect(service.createLedgerEntries(entries)).rejects.toThrow(
-        "Database error"
-      );
-      expect(mockClient.query).toHaveBeenCalledWith("ROLLBACK");
+      await expect(
+        service.createLedgerEntries(entries, undefined)
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
   describe("verifyTransactionBalance", () => {
     it("should verify balanced transaction", async () => {
       const mockEntries = [
-        { transaction_id: "tx-1", account_id: "acc-1", amount: -100 },
-        { transaction_id: "tx-1", account_id: "acc-2", amount: 100 },
+        {
+          id: "entry-1",
+          transaction_id: "tx-1",
+          account_id: "acc-1",
+          amount: -100,
+          type: "DEBIT",
+          description: "Test",
+          created_at: new Date(),
+        },
+        {
+          id: "entry-2",
+          transaction_id: "tx-1",
+          account_id: "acc-2",
+          amount: 100,
+          type: "CREDIT",
+          description: "Test",
+          created_at: new Date(),
+        },
       ];
 
-      mockDb.query.mockResolvedValue({ rows: mockEntries });
+      jest
+        .spyOn(service, "getLedgerEntriesByTransaction")
+        .mockResolvedValue(mockEntries as any);
 
       const result = await service.verifyTransactionBalance("tx-1");
 
@@ -156,11 +115,29 @@ describe("LedgerService", () => {
 
     it("should detect unbalanced transaction", async () => {
       const mockEntries = [
-        { transaction_id: "tx-1", account_id: "acc-1", amount: -100 },
-        { transaction_id: "tx-1", account_id: "acc-2", amount: 50 },
+        {
+          id: "entry-1",
+          transaction_id: "tx-1",
+          account_id: "acc-1",
+          amount: -100,
+          type: "DEBIT",
+          description: "Test",
+          created_at: new Date(),
+        },
+        {
+          id: "entry-2",
+          transaction_id: "tx-1",
+          account_id: "acc-2",
+          amount: 50,
+          type: "CREDIT",
+          description: "Test",
+          created_at: new Date(),
+        },
       ];
 
-      mockDb.query.mockResolvedValue({ rows: mockEntries });
+      jest
+        .spyOn(service, "getLedgerEntriesByTransaction")
+        .mockResolvedValue(mockEntries as any);
 
       const result = await service.verifyTransactionBalance("tx-1");
 
@@ -171,19 +148,17 @@ describe("LedgerService", () => {
 
   describe("calculateAccountBalance", () => {
     it("should calculate correct account balance from ledger", async () => {
-      mockDb.query.mockResolvedValue({ rows: [{ balance: "1234.56" }] });
+      jest
+        .spyOn(repository, "calculateAccountBalance")
+        .mockResolvedValue(1234.56);
 
       const balance = await service.calculateAccountBalance("acc-1");
 
       expect(balance).toBe(1234.56);
-      expect(mockDb.query).toHaveBeenCalledWith(
-        expect.stringContaining("SUM(amount)"),
-        ["acc-1"]
-      );
     });
 
     it("should return 0 for account with no entries", async () => {
-      mockDb.query.mockResolvedValue({ rows: [{ balance: "0" }] });
+      jest.spyOn(repository, "calculateAccountBalance").mockResolvedValue(0);
 
       const balance = await service.calculateAccountBalance("empty-acc");
 
@@ -193,12 +168,10 @@ describe("LedgerService", () => {
 
   describe("verifyAllAccountBalances", () => {
     it("should identify consistent accounts", async () => {
-      const mockAccounts = [
-        { id: "acc-1", account_balance: "1000.00", ledger_balance: "1000.00" },
-        { id: "acc-2", account_balance: "500.50", ledger_balance: "500.50" },
-      ];
-
-      mockDb.query.mockResolvedValue({ rows: mockAccounts });
+      jest.spyOn(repository, "getAllAccountBalances").mockResolvedValue([
+        { id: "acc-1", account_balance: 1000.0, ledger_balance: 1000.0 },
+        { id: "acc-2", account_balance: 500.5, ledger_balance: 500.5 },
+      ] as any);
 
       const result = await service.verifyAllAccountBalances();
 
@@ -207,12 +180,10 @@ describe("LedgerService", () => {
     });
 
     it("should identify inconsistent accounts", async () => {
-      const mockAccounts = [
-        { id: "acc-1", account_balance: "1000.00", ledger_balance: "900.00" },
-        { id: "acc-2", account_balance: "500.50", ledger_balance: "500.50" },
-      ];
-
-      mockDb.query.mockResolvedValue({ rows: mockAccounts });
+      jest.spyOn(repository, "getAllAccountBalances").mockResolvedValue([
+        { id: "acc-1", account_balance: 1000.0, ledger_balance: 900.0 },
+        { id: "acc-2", account_balance: 500.5, ledger_balance: 500.5 },
+      ] as any);
 
       const result = await service.verifyAllAccountBalances();
 

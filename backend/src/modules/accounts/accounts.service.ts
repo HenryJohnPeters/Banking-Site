@@ -17,7 +17,7 @@ export class AccountsService {
 
   async getAccountBalance(
     accountId: string,
-    userId: string
+    userId: string,
   ): Promise<{ balance: number; currency: Currency }> {
     const account = await this.getAccountById(accountId, userId);
     return {
@@ -30,19 +30,19 @@ export class AccountsService {
     accountId: string,
     userId: string,
     page: number = 1,
-    limit: number = 20
+    limit: number = 20,
   ): Promise<PagedResult<Transaction>> {
     return this.accountsRepository.getAccountTransactions(
       accountId,
       userId,
       page,
-      limit
+      limit,
     );
   }
 
   async updateAccountBalance(
     accountId: string,
-    newBalance: number
+    newBalance: number,
   ): Promise<void> {
     // Keep a non-transactional helper for cases where we just need to update via the pool
     // The repository method will choose the correct executor
@@ -51,7 +51,7 @@ export class AccountsService {
     await this.accountsRepository.updateAccountBalance(
       db,
       accountId,
-      newBalance
+      newBalance,
     );
   }
 
@@ -60,6 +60,12 @@ export class AccountsService {
     ledgerBalance: number;
     accountBalance: number;
   }> {
-    return this.accountsRepository.verifyAccountBalance(accountId);
+    const result =
+      await this.accountsRepository.verifyAccountBalance(accountId);
+    return {
+      isConsistent: result.isConsistent,
+      ledgerBalance: result.calculatedBalance, // calculatedBalance is the ledger-calculated balance
+      accountBalance: result.accountBalance,
+    };
   }
 }

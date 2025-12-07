@@ -39,6 +39,7 @@ export interface Transaction {
   updated_at: string;
   from_currency?: Currency;
   to_currency?: Currency;
+  to_amount?: number; // For exchange transactions
 }
 
 export interface TransferRequest {

@@ -8,13 +8,8 @@ import {
   Response,
   HttpCode,
 } from "@nestjs/common";
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBody,
-  ApiBearerAuth,
-} from "@nestjs/swagger";
+import { ApiTags, ApiOperation, ApiResponse, ApiBody } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 import { AuthService } from "./auth.service";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
 import { CreateUserDto } from "../../models/User";
@@ -26,6 +21,7 @@ export class AuthController {
   constructor(private authService: AuthService) {}
 
   @Post("register")
+  @Throttle({ default: { limit: 5, ttl: 3600000 } }) // 5 registrations per hour
   @ApiOperation({
     summary: "Register a new user",
     description:
@@ -45,8 +41,6 @@ export class AuthController {
             email: { type: "string", format: "email" },
             first_name: { type: "string" },
             last_name: { type: "string" },
-            created_at: { type: "string", format: "date-time" },
-            updated_at: { type: "string", format: "date-time" },
           },
         },
         message: { type: "string" },
@@ -61,7 +55,7 @@ export class AuthController {
   async register(@Body() createUserDto: CreateUserDto, @Response() res) {
     const result = await this.authService.register(createUserDto);
 
-    // Set secure httpOnly cookie (primary auth method)
+    // Set secure httpOnly cookie (primary auth method for browsers)
     res.cookie("banking_token", result.token, {
       httpOnly: true, // Prevents XSS attacks
       secure: process.env.NODE_ENV === "production", // HTTPS only in production
@@ -70,7 +64,7 @@ export class AuthController {
       path: "/",
     });
 
-    // Return user data only (token is in secure cookie)
+    // Return user data only - NO TOKEN in response body (security best practice)
     return res.json({
       user: result.user,
       message: "Registration successful",
@@ -79,10 +73,11 @@ export class AuthController {
 
   @Post("login")
   @HttpCode(200)
+  @Throttle({ default: { limit: 10, ttl: 900000 } }) // 10 login attempts per 15 minutes
   @ApiOperation({
     summary: "User login",
     description:
-      "Authenticates user credentials and sets secure authentication cookie",
+      "Authenticates user credentials and sets secure httpOnly cookie",
   })
   @ApiBody({ type: LoginDto })
   @ApiResponse({
@@ -98,11 +93,8 @@ export class AuthController {
             email: { type: "string", format: "email" },
             first_name: { type: "string" },
             last_name: { type: "string" },
-            created_at: { type: "string", format: "date-time" },
-            updated_at: { type: "string", format: "date-time" },
           },
         },
-        token: { type: "string" },
         message: { type: "string" },
       },
     },
@@ -111,7 +103,7 @@ export class AuthController {
   async login(@Body() loginDto: LoginDto, @Response() res) {
     const result = await this.authService.login(loginDto);
 
-    // Set httpOnly cookie for additional security
+    // Set httpOnly cookie for browser security (prevents XSS)
     res.cookie("banking_token", result.token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -120,16 +112,15 @@ export class AuthController {
       path: "/",
     });
 
-    // Return both user data and token for frontend Authorization headers
+    // Return user data only - NO TOKEN in response body
     return res.json({
       user: result.user,
-      token: result.token,
+      message: "Login successful",
     });
   }
 
   @UseGuards(JwtAuthGuard)
   @Get("profile")
-  @ApiBearerAuth("JWT-auth")
   @ApiOperation({
     summary: "Get user profile",
     description: "Returns the authenticated user's profile information",
@@ -159,7 +150,6 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post("logout")
-  @ApiBearerAuth("JWT-auth")
   @ApiOperation({
     summary: "User logout",
     description:

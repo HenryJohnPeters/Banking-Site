@@ -2,16 +2,13 @@ import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
+  {
+    ignores: ["dist/**", "node_modules/**", "coverage/**", "build/**"],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: [
-      "src/**/*.{ts,tsx}",
-      "*.{ts,tsx,js,jsx}",
-      "tests/**/*.{ts,tsx}",
-      "**/*.config.{ts,js}",
-      "**/*.config.*.cjs",
-    ],
+    files: ["src/**/*.{ts,tsx}", "*.config.{ts,js}"],
     languageOptions: {
       parser: tseslint.parser,
       // No parserOptions.project to avoid config/vite parsing errors

@@ -28,7 +28,7 @@ export class AuditLogService {
           entry.resource_id,
           JSON.stringify(entry.details),
           entry.ip_address,
-        ]
+        ],
       );
     } catch (error) {
       console.error("Audit log failed:", error);
@@ -38,7 +38,7 @@ export class AuditLogService {
   async getRecent(userId: string, limit = 10): Promise<AuditLogEntry[]> {
     const result = await db.query(
       "SELECT * FROM audit_log WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
-      [userId, limit]
+      [userId, limit],
     );
     return result.rows;
   }

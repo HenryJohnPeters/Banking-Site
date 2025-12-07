@@ -3,24 +3,25 @@ import { db } from "../../shared/database/client";
 import { PoolClient } from "pg";
 import { Account } from "../../models/Account";
 import { Transaction, PagedResult } from "../../models/Transaction";
+import { ACCOUNT_BALANCE_TOLERANCE } from "../../shared/constants";
 
 @Injectable()
 export class AccountsRepository {
   async findUserAccounts(userId: string): Promise<Account[]> {
     const result = await db.query(
       `SELECT * FROM accounts WHERE user_id = $1 ORDER BY currency`,
-      [userId]
+      [userId],
     );
     return result.rows;
   }
 
   async findUserAccountById(
     accountId: string,
-    userId: string
+    userId: string,
   ): Promise<Account> {
     const result = await db.query(
       `SELECT * FROM accounts WHERE id = $1 AND user_id = $2`,
-      [accountId, userId]
+      [accountId, userId],
     );
 
     if (result.rows.length === 0) {
@@ -33,14 +34,14 @@ export class AccountsRepository {
   async lockUserAccount(
     client: PoolClient,
     accountId: string,
-    userId: string
+    userId: string,
   ): Promise<Account> {
     const result = await client.query(
       `SELECT id, user_id, currency, balance 
        FROM accounts 
        WHERE id = $1 AND user_id = $2 
        FOR UPDATE`,
-      [accountId, userId]
+      [accountId, userId],
     );
 
     if (result.rows.length === 0) {
@@ -56,7 +57,7 @@ export class AccountsRepository {
        FROM accounts 
        WHERE id = $1 
        FOR UPDATE`,
-      [accountId]
+      [accountId],
     );
 
     if (result.rows.length === 0) {
@@ -69,12 +70,12 @@ export class AccountsRepository {
   async updateAccountBalance(
     clientOrDb: PoolClient | typeof db,
     accountId: string,
-    newBalance: number
+    newBalance: number,
   ): Promise<void> {
     const executor: any = "query" in clientOrDb ? clientOrDb : db;
     await executor.query(
       "UPDATE accounts SET balance = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
-      [newBalance, accountId]
+      [newBalance, accountId],
     );
   }
 
@@ -82,7 +83,7 @@ export class AccountsRepository {
     accountId: string,
     userId: string,
     page: number = 1,
-    limit: number = 20
+    limit: number = 20,
   ): Promise<PagedResult<Transaction>> {
     // Verify account belongs to user
     await this.findUserAccountById(accountId, userId);
@@ -94,13 +95,13 @@ export class AccountsRepository {
        WHERE (from_account_id = $1 OR to_account_id = $1)
        ORDER BY created_at DESC 
        LIMIT $2 OFFSET $3`,
-      [accountId, limit, offset]
+      [accountId, limit, offset],
     );
 
     const countResult = await db.query(
       `SELECT COUNT(*) FROM transactions 
        WHERE (from_account_id = $1 OR to_account_id = $1)`,
-      [accountId]
+      [accountId],
     );
 
     const total = parseInt(countResult.rows[0].count);
@@ -114,33 +115,34 @@ export class AccountsRepository {
   }
 
   async verifyAccountBalance(accountId: string): Promise<{
-    isConsistent: boolean;
-    ledgerBalance: number;
     accountBalance: number;
+    calculatedBalance: number;
+    isConsistent: boolean;
   }> {
     const result = await db.query(
-      `SELECT 
-         a.balance as account_balance,
-         COALESCE(SUM(l.amount), 0) as ledger_balance
+      `SELECT a.balance as account_balance, 
+              COALESCE(SUM(le.amount), 0) as calculated_balance
        FROM accounts a
-       LEFT JOIN ledger_entries l ON a.id = l.account_id
+       LEFT JOIN ledger_entries le ON le.account_id = a.id
        WHERE a.id = $1
        GROUP BY a.id, a.balance`,
-      [accountId]
+      [accountId],
     );
 
     if (result.rows.length === 0) {
       throw new NotFoundException("Account not found");
     }
 
-    const { account_balance, ledger_balance } = result.rows[0];
+    const { account_balance, calculated_balance } = result.rows[0];
     const accountBalance = parseFloat(account_balance);
-    const calculatedBalance = parseFloat(ledger_balance);
+    const calculatedBalance = parseFloat(calculated_balance);
 
     return {
-      isConsistent: Math.abs(accountBalance - calculatedBalance) < 0.01,
-      ledgerBalance: calculatedBalance,
-      accountBalance: accountBalance,
+      accountBalance,
+      calculatedBalance,
+      isConsistent:
+        Math.abs(accountBalance - calculatedBalance) <
+        ACCOUNT_BALANCE_TOLERANCE,
     };
   }
 }

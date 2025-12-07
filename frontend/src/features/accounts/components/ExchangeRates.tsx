@@ -1,5 +1,3 @@
-import Card from "../../../components/ui/Card/Card";
-
 interface ExchangeRatesProps {
   rates: {
     USD_TO_EUR: number;
@@ -9,21 +7,29 @@ interface ExchangeRatesProps {
 
 const ExchangeRates = ({ rates }: ExchangeRatesProps) => {
   return (
-    <Card>
-      <h3 className="text-lg font-medium text-gray-900 mb-4">
-        Current Exchange Rates
-      </h3>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="text-center">
-          <p className="text-sm text-gray-500">USD to EUR</p>
-          <p className="text-xl font-semibold">{rates.USD_TO_EUR}</p>
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+      <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm font-medium text-gray-700">USD → EUR</p>
+          <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
+            <span className="text-gray-700 font-bold text-sm">$</span>
+          </div>
         </div>
-        <div className="text-center">
-          <p className="text-sm text-gray-500">EUR to USD</p>
-          <p className="text-xl font-semibold">{rates.EUR_TO_USD}</p>
-        </div>
+        <p className="text-2xl font-bold text-gray-900">{rates.USD_TO_EUR}</p>
+        <p className="text-xs text-gray-600 mt-1">US Dollar to Euro</p>
       </div>
-    </Card>
+
+      <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm font-medium text-gray-700">EUR → USD</p>
+          <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
+            <span className="text-gray-700 font-bold text-sm">€</span>
+          </div>
+        </div>
+        <p className="text-2xl font-bold text-gray-900">{rates.EUR_TO_USD}</p>
+        <p className="text-xs text-gray-600 mt-1">Euro to US Dollar</p>
+      </div>
+    </div>
   );
 };
 

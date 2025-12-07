@@ -12,11 +12,11 @@ import {
 export class TransactionsRepository {
   async findByIdempotencyKey(
     client: PoolClient,
-    idempotencyKey: string
+    idempotencyKey: string,
   ): Promise<Transaction | null> {
     const existing = await client.query(
       "SELECT * FROM transactions WHERE idempotency_key = $1",
-      [idempotencyKey]
+      [idempotencyKey],
     );
     return existing.rows[0] ?? null;
   }
@@ -31,7 +31,7 @@ export class TransactionsRepository {
       currency: string;
       description: string | null;
       idempotencyKey?: string | null;
-    }
+    },
   ): Promise<void> {
     await client.query(
       `INSERT INTO transactions 
@@ -47,7 +47,7 @@ export class TransactionsRepository {
         TransactionStatus.COMPLETED,
         data.description,
         data.idempotencyKey ?? null,
-      ]
+      ],
     );
   }
 
@@ -63,7 +63,7 @@ export class TransactionsRepository {
       toCurrency: string;
       description: string | null;
       idempotencyKey?: string | null;
-    }
+    },
   ): Promise<void> {
     await client.query(
       `INSERT INTO transactions 
@@ -79,14 +79,16 @@ export class TransactionsRepository {
         TransactionStatus.COMPLETED,
         data.description,
         data.idempotencyKey ?? null,
-      ]
+      ],
     );
   }
 
-  async findById(id: string): Promise<Transaction | null> {
-    const result = await db.query("SELECT * FROM transactions WHERE id = $1", [
-      id,
-    ]);
+  async findById(id: string, client?: PoolClient): Promise<Transaction | null> {
+    const executor = client || db;
+    const result = await executor.query(
+      "SELECT * FROM transactions WHERE id = $1",
+      [id],
+    );
     return result.rows[0] ?? null;
   }
 
@@ -94,7 +96,7 @@ export class TransactionsRepository {
     userId: string,
     page: number = 1,
     limit: number = 20,
-    type?: TransactionType
+    type?: TransactionType,
   ): Promise<PagedResult<Transaction>> {
     const offset = (page - 1) * limit;
 
@@ -107,11 +109,21 @@ export class TransactionsRepository {
     }
 
     const result = await db.query(
-      `SELECT t.*, 
+      `SELECT DISTINCT t.*, 
               a1.currency as from_currency,
               a2.currency as to_currency,
               u1.first_name || ' ' || u1.last_name as from_user_name,
-              u2.first_name || ' ' || u2.last_name as to_user_name
+              u2.first_name || ' ' || u2.last_name as to_user_name,
+              CASE 
+                WHEN t.type = 'EXCHANGE' THEN (
+                  SELECT ABS(amount) 
+                  FROM ledger_entries 
+                  WHERE transaction_id = t.id 
+                  AND account_id = t.to_account_id 
+                  LIMIT 1
+                )
+                ELSE NULL
+              END as to_amount
        FROM transactions t
        LEFT JOIN accounts a1 ON t.from_account_id = a1.id
        LEFT JOIN accounts a2 ON t.to_account_id = a2.id
@@ -120,11 +132,14 @@ export class TransactionsRepository {
        ${whereClause}
        ORDER BY t.created_at DESC
        LIMIT $2 OFFSET $3`,
-      queryParams
+      queryParams,
     );
 
+    let countWhereClause = "WHERE (a1.user_id = $1 OR a2.user_id = $1)";
     const countParams: any[] = [userId];
+
     if (type) {
+      countWhereClause += ` AND t.type = $${countParams.length + 1}`;
       countParams.push(type);
     }
 
@@ -132,8 +147,8 @@ export class TransactionsRepository {
       `SELECT COUNT(DISTINCT t.id) FROM transactions t
        LEFT JOIN accounts a1 ON t.from_account_id = a1.id
        LEFT JOIN accounts a2 ON t.to_account_id = a2.id
-       ${whereClause.replace("LIMIT $2 OFFSET $3", "")}`,
-      countParams
+       ${countWhereClause}`,
+      countParams,
     );
 
     const total = parseInt(countResult.rows[0].count, 10);
